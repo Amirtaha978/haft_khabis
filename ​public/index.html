@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>بازی آنلاین هفت خبیث</title>
+    <style>
+        body { font-family: Tahoma, sans-serif; background: #0f2027; color: #fff; margin: 0; padding: 10px; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+        .card { width: 65px; height: 95px; background: white; color: black; border-radius: 8px; display: inline-flex; flex-direction: column; justify-content: space-between; padding: 5px; font-weight: bold; cursor: pointer; user-select: none; box-shadow: 0 4px 6px rgba(0,0,0,0.3); transition: transform 0.2s; margin: 3px; }
+        .card:hover { transform: translateY(-8px); }
+        .card.red { color: #d32f2f; }
+        .card.black { color: #212121; }
+        .table-area { display: flex; gap: 20px; align-items: center; margin: 20px 0; background: rgba(255,255,255,0.05); padding: 15px; border-radius: 12px; }
+        .hand { display: flex; flex-wrap: wrap; justify-content: center; max-width: 600px; margin-top: 15px; }
+        .btn { background: #4caf50; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold; margin: 5px; }
+        .btn:hover { background: #45a049; }
+        .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: flex; justify-content: center; align-items: center; z-index: 100; }
+        .modal-content { background: #1f2937; padding: 25px; border-radius: 12px; text-align: center; }
+        input { padding: 10px; font-size: 16px; border-radius: 5px; border: 1px solid #ccc; margin: 5px; width: 80%; }
+        .credit { margin-top: auto; font-size: 12px; color: #9ca3af; text-align: center; padding: 10px; }
+    </style>
+</head>
+<body>
+
+    <div id="loginModal" class="modal">
+    <div class="modal-content">
+        <h2>ورود به بازی هفت خبیث</h2>
+        <input type="text" id="usernameInput" placeholder="نام خود را وارد کنید"><br>
+        <input type="text" id="roomInput" placeholder="کد اتاق (مثلا 123)"><br>
+        <button class="btn" onclick="joinGame()">ورود / ساخت اتاق</button>
+    </div>
+</div>
+
+<div id="suitModal" class="modal" style="display:none;">
+    <div class="modal-content">
+        <h3>یک خال انتخاب کنید</h3>
+        <button class="btn" onclick="chooseSuit('♠')">♠ پیک</button>
+        <button class="btn" onclick="chooseSuit('♥')">♥ دل</button>
+        <button class="btn" onclick="chooseSuit('♦')">♦ خشت</button>
+        <button class="btn" onclick="chooseSuit('♣')">♣ گشنیز</button>
+    </div>
+</div>
+
+    <div id="gameScreen" style="display:none; text-align: center; width: 100%;">
+        <h2 id="roomTitle">کد اتاق: <span id="displayRoomId"></span></h2>
+        <div id="playersList" style="margin-bottom: 10px; font-size: 14px; color: #fbbf24;"></div>
+        <button id="startBtn" class="btn" style="display:none;" onclick="startGame()">شروع بازی</button>
+        
+        <div style="display: flex; justify-content: center;">
+            <div class="table-area">
+                <div>
+                    <div>کارت وسط</div>
+                    <div id="discardPile" style="min-height: 95px; display: flex; align-items: center; justify-content: center;"></div>
+                </div>
+                <div>
+                    <div>دسته‌کارت</div>
+                    <div class="card" onclick="drawCard()" style="background: #3b82f6; color: white; display: flex; align-items: center; justify-content: center; font-size: 24px;">🎴</div>
+                </div>
+            </div>
+        </div>
+
+        <h3 id="turnIndicator">نوبت شماست</h3>
+        <h3>کارت‌های شما:</h3>
+        <div id="myHand" class="hand"></div>
+    </div>
+
+    <div class="credit">طراحی شده برای گروه روبیکا</div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let myRoomId = '';
+        let myUsername = '';
+        let selectedCardId = null;
+
+        function joinGame() {
+            myUsername = document.getElementById('usernameInput').value.trim();
+            myRoomId = document.getElementById('roomInput').value.trim();
+            if(!myUsername || !myRoomId) return alert('لطفا نام و کد اتاق را وارد کنید.');
+            socket.emit('createOrJoin', { roomId: myRoomId, username: myUsername });
+        }
+
+        socket.on('joinSuccess', () => {
+            document.getElementById('loginModal').style.display = 'none';
+            document.getElementById('gameScreen').style.display = 'block';
+            document.getElementById('displayRoomId').innerText = myRoomId;
+        });
+
+        socket.on('roomUpdate', (room) => {
+            updateRoomUI(room);
+        });
+
+        function updateRoomUI(room) {
+            const playersList = document.getElementById('playersList');
+            playersList.innerHTML = 'بازیکنان حاضر: ' + room.players.map(p => p.username).join(', ');
+            if(room.players[0].id === socket.id && !room.started) {
+                document.getElementById('startBtn').style.display = 'inline-block';
+            }
+        }
+
+        function startGame() {
+            socket.emit('startGame', myRoomId);
+        }
+
+        socket.on('gameStarted', (room) => {
+            document.getElementById('startBtn').style.display = 'none';
+            updateGameState(room);
+        });
+
+        socket.on('gameStateUpdate', (room) => {
+            updateGameState(room);
+        });
+
+        function updateGameState(room) {
+            updateRoomUI(room);
+            const topCard = room.discardPile[room.discardPile.length - 1];
+            const discardDiv = document.getElementById('discardPile');
+            discardDiv.innerHTML = createCardHTML(topCard);
+
+            const me = room.players.find(p => p.id === socket.id);
+            const handDiv = document.getElementById('myHand');
+            handDiv.innerHTML = '';
+            if(me) {
+                me.cards.forEach(card => {
+                    const cardEl = document.createElement('div');
+                    cardEl.innerHTML = createCardHTML(card);
+                    cardEl.onclick = () => handleCardClick(card);
+                    handDiv.appendChild(cardEl);
+                });
+            }
+
+            const currentTurnPlayer = room.players[room.turnIndex];
+            const turnIndicator = document.getElementById('turnIndicator');
+            if(currentTurnPlayer.id === socket.id) {
+                turnIndicator.innerText = 'نوبت شماست!';
+                turnIndicator.style.color = '#4ade80';
+            } else {
+                turnIndicator.innerText = `نوبت ${currentTurnPlayer.username} است.`;
+                turnIndicator.style.color = '#f87171';
+            }
+        }
+
+        function createCardHTML(card) {
+            const isRed = ['♥', '♦'].includes(card.suit);
+            return `<div class="card ${isRed ? 'red' : 'black'}">
+                <span style="font-size: 14px;">${card.value}</span>
+                <span style="font-size: 24px; text-align: center;">${card.suit}</span>
+                <span style="font-size: 14px; text-align: left;">${card.value}</span>
+            </div>`;
+        }
+
+        function handleCardClick(card) {
+            selectedCardId = card.id;
+            if(card.value === 'J') {
+                document.getElementById('suitModal').style.display = 'flex';
+            } else {
+                socket.emit('playCard', { roomId: myRoomId, cardId: selectedCardId, chosenSuit: null });
+            }
+        }
+
+        function chooseSuit(suit) {
+            document.getElementById('suitModal').style.display = 'none';
+            socket.emit('playCard', { roomId: myRoomId, cardId: selectedCardId, chosenSuit: suit });
+        }
+
+        function drawCard() {
+            socket.emit('drawCard', myRoomId);
+        }
+
+        socket.on('errorMsg', (msg) => alert(msg));
+        socket.on('gameOver', (data) => {
+            alert('بازی تمام شد! برنده: ' + data.winner);
+            location.reload();
+        });
+    </script>
+</body>
+</html>
